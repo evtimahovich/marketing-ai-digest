@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -37,6 +38,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          DIGEST_LANGUAGE: "ru"          # поставь "uk" для украинского
+          DIGEST_LANGUAGE: "ru"
+          PRIORITY_SOURCES: "mmr.ua, adweek.com, campaignlive.com, thedrum.com, marketingdive.com, deepmind.google, techcrunch.com"
           MODE: ${{ steps.mode.outputs.mode || 'digest' }}
         run: python digest_agent.py
