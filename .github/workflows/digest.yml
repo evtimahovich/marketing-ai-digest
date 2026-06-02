@@ -1,0 +1,41 @@
+name: marketing-digest
+
+# Расписание в UTC. Киев летом = UTC+3, зимой = UTC+2.
+# 03:30 UTC ≈ 06:30 Киев (лето) / 05:30 (зима). Подкрути цифру при желании.
+on:
+  schedule:
+    - cron: "30 3 * * *"      # ежедневный дайджест ~утром по Киеву
+    - cron: "0 */6 * * *"     # проверка горящих новостей каждые 6 часов
+  workflow_dispatch:           # кнопка ручного запуска в интерфейсе GitHub
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      # Определяем режим: 03:30 — полный дайджест, остальные запуски — алерты.
+      - name: Pick mode
+        id: mode
+        run: |
+          if [ "${{ github.event.schedule }}" = "30 3 * * *" ]; then
+            echo "mode=digest" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=alert" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run agent
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DIGEST_LANGUAGE: "ru"          # поставь "uk" для украинского
+          MODE: ${{ steps.mode.outputs.mode || 'digest' }}
+        run: python digest_agent.py
