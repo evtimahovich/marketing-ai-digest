@@ -1,0 +1,30 @@
+name: business-digest
+
+on:
+  schedule:
+    - cron: "30 1 * * 1,3"      # Mon/Wed 08:30 (Asia/Ho_Chi_Minh)
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Run agent
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DIGEST_LANGUAGE: "ru"
+          MODE: "digest"
+          TOPIC_HINT: "Автоматизации в бизнесе, внедрение ИИ в продажи, маркетинг, HR/подбор, IT и операции"
+          PRIORITY_SOURCES: "mmr.ua, adweek.com, campaignlive.com, thedrum.com, marketingdive.com, deepmind.google, techcrunch.com, venturebeat.com, forbes.com, hbr.org, entrepreneur.com"
+        run: python digest_agent.py
