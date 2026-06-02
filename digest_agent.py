@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Маркетинговый AI-дайджест → Telegram.
+"""
+Маркетинговый AI-дайджест → Telegram.
 
 Что делает:
   1. Сам ходит в интернет (через граундинг Google Search в Gemini),
@@ -41,7 +42,21 @@ NO_ALERT_TOKEN = "NO_ALERT"
 LANG_NAME = {"ru": "русском", "uk": "украинском"}.get(LANG, "русском")
 
 # Приоритетные источники: агент проверяет их в первую очередь (запросами site:domain),
-# но НЕ ограничивается только ими — мир/региоdef build_system_prompt() -> str:
+# но НЕ ограничивается только ими — мир/регионы тянет и из остальной сети.
+# Дописывай новые домены сюда или через переменную окружения PRIORITY_SOURCES
+# (через запятую). Без https:// и без www — просто домен.
+_default_sources = "mmr.ua"
+PRIORITY_SOURCES = [
+    s.strip().replace("https://", "").replace("http://", "").replace("www.", "").rstrip("/")
+    for s in os.environ.get("PRIORITY_SOURCES", _default_sources).split(",")
+    if s.strip()
+]
+
+
+# ----------------------------------------------------------------------------
+# Редакторский бриф — это «душа» дайджеста. Меняешь тут — меняется тон.
+# ----------------------------------------------------------------------------
+def build_system_prompt() -> str:
     sources_line = ", ".join(PRIORITY_SOURCES) if PRIORITY_SOURCES else "(не заданы)"
     return f"""Ты — шеф-редактор ежедневного маркетингового дайджеста для креативного
 агентства, которое делает контент через AI (SMM, сайты, рекламные ролики) и
@@ -89,6 +104,7 @@ LANG_NAME = {"ru": "русском", "uk": "украинском"}.get(LANG, "р
 - Объём — компактный, чтобы читалось за минуту-две.
 """
 
+
 def build_user_prompt() -> str:
     today = datetime.date.today().strftime("%d.%m.%Y")
     if MODE == "alert":
@@ -115,17 +131,104 @@ def build_user_prompt() -> str:
 Сначала поищи свежие материалы (AI-ролики и AI-реклама в приоритете, затем
 залёты рекламы по регионам: мир, Украина-СНГ, Азия, Европа; затем — новости
 инструментов генерации видео).{sources_hint} Потом напиши выпуск по заданной структуре."""
-ны тянет и из остальной сети.
-# Дописывай новые домены сюда или через переменную окружения PRIORITY_SOURCES
-# (через запятую). Без https:// и без www — просто домен.
-_default_sources = "mmr.ua"
-PRIORITY_SOURCES = [
-    s.strip().replace("https://", "").replace("http://", "").replace("www.", "").rstrip("/")
-    for s in os.environ.get("PRIORITY_SOURCES", _default_sources).split(",")
-    if s.strip()
-]
 
 
 # ----------------------------------------------------------------------------
-# Редакторский бриф — это «душа» дайджеста. Меняешь тут — меняется тон.
+# Сбор дайджеста через Gemini 3.1 + граундинг Google Search
 # ----------------------------------------------------------------------------
+def generate_digest() -> str:
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=GEMINI_API_KEY)
+
+    # Встроенные инструменты Gemini:
+    #  - google_search: модель сама ищет в вебе и проставляет источники;
+    #  - url_context:   умеет открывать конкретные страницы (в т.ч. t.me/s/<канал>).
+    tools = [
+        types.Tool(google_search=types.GoogleSearch()),
+        types.Tool(url_context=types.UrlContext()),
+    ]
+
+    config = types.GenerateContentConfig(
+        system_instruction=build_system_prompt(),
+        tools=tools,
+    )
+
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=build_user_prompt(),
+        config=config,
+    )
+
+    return (response.text or "").strip()
+
+
+# ----------------------------------------------------------------------------
+# Отправка в Telegram (без внешних зависимостей, через urllib)
+# ----------------------------------------------------------------------------
+def _post_telegram(text: str, use_html: bool) -> bool:
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "disable_web_page_preview": "true",
+    }
+    if use_html:
+        payload["parse_mode"] = "HTML"
+    data = urllib.parse.urlencode(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return 200 <= resp.status < 300
+    except Exception as e:  # noqa: BLE001
+        print(f"[telegram] ошибка отправки: {e}", file=sys.stderr)
+        return False
+
+
+def send_to_telegram(text: str) -> None:
+    # Telegram ограничивает сообщение ~4096 символами — режем по абзацам.
+    limit = 3800
+    chunks, current = [], ""
+    for paragraph in text.split("\n\n"):
+        if len(current) + len(paragraph) + 2 > limit:
+            if current:
+                chunks.append(current)
+            current = paragraph
+        else:
+            current = (current + "\n\n" + paragraph) if current else paragraph
+    if current:
+        chunks.append(current)
+
+    for chunk in chunks:
+        ok = _post_telegram(chunk, use_html=True)
+        if not ok:
+            # запасной вариант: вдруг сломалась HTML-разметка — шлём как текст
+            _post_telegram(chunk, use_html=False)
+
+
+# ----------------------------------------------------------------------------
+def main() -> int:
+    missing = [k for k in ("GEMINI_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
+               if not os.environ.get(k)]
+    if missing:
+        print(f"Не заданы переменные окружения: {', '.join(missing)}", file=sys.stderr)
+        return 1
+
+    digest = generate_digest()
+
+    if MODE == "alert" and (not digest or NO_ALERT_TOKEN in digest):
+        print("Горящих новостей нет — алерт не отправлен.")
+        return 0
+
+    if not digest:
+        print("Пустой результат — нечего отправлять.", file=sys.stderr)
+        return 1
+
+    send_to_telegram(digest)
+    print("Отправлено в Telegram.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
