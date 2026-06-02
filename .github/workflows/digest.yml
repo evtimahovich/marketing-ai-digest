@@ -1,19 +1,21 @@
 name: marketing-digest
 
-# Расписание в UTC. Киев летом = UTC+3, зимой = UTC+2.
-# 03:30 UTC ≈ 06:30 Киев (лето) / 05:30 (зима). Подкрути цифру при желании.
+# Расписание в UTC, исходя из Asia/Ho_Chi_Minh (UTC+7):
+# - 01:30 UTC = 08:30 локально (ежедневный дайджест)
+# - 01:00 UTC = 08:00 локально (горящие)
+# - 12:00 UTC = 19:00 локально (горящие)
 on:
   schedule:
-    - cron: "30 3 * * *"      # ежедневный дайджест ~утром по Киеву
-    - cron: "0 */6 * * *"     # проверка горящих новостей каждые 6 часов
-  workflow_dispatch:           # кнопка ручного запуска в интерфейсе GitHub
+    - cron: "30 1 * * *"   # daily digest
+    - cron: "0 1 * * *"    # alert
+    - cron: "0 12 * * *"   # alert
+  workflow_dispatch:
 
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -21,14 +23,13 @@ jobs:
       - name: Install deps
         run: pip install -r requirements.txt
 
-      # Определяем режим: 03:30 — полный дайджест, остальные запуски — алерты.
       - name: Pick mode
         id: mode
         run: |
-          if [ "${{ github.event.schedule }}" = "30 3 * * *" ]; then
-            echo "mode=digest" >> "$GITHUB_OUTPUT"
-          else
+          if [ "${{ github.event.schedule }}" = "0 1 * * *" ] || [ "${{ github.event.schedule }}" = "0 12 * * *" ]; then
             echo "mode=alert" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=digest" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run agent
